@@ -168,7 +168,7 @@ def train_test():
         fn_list = np.array(fn_list)   
         print(tp_list)
 
-        print("1wqwqwqwqwqwqw")
+        print("我更改了哦，来自于后湖的windows，你在209的centos能不能get到啊！")
 
         mae_sz = mae_sz/test_batch_num
         mae_hd = mae_hd/test_batch_num
