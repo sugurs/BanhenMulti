@@ -22,6 +22,10 @@ from config import Config
 # from tqdm import tqdm
 
 
+# dingyi config
+cfg = Config()
+
+
 def calc_tpfn(gt, pred, pos_label):
     TP = 0
     TN = 0
@@ -215,7 +219,6 @@ def test():
 
 if __name__ == '__main__':
 
-    cfg = Config()
     train_test()
     # test_one_img("/media/E_4TB/WW/dataset/AAA【已整理数据】瘢痕/【评分用】瘢痕/ScoreDataset/%s.jpg" % "943-257")
     # test()

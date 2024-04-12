@@ -19,8 +19,8 @@ from PIL import ImageFile
 
 class Config():
     def __init__(self,):
-        os.environ["CUDA_VISIBLE_DEVICES"] = "0,1,2,3"
-        self.backbone_name = 'resnet50'                            # resnet50 resnet18
+        os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1, 2, 3"
+        self.backbone_name = 'resnet50'                         # resnet50 resnet18
         self.freeze_feature_extractor_weights = False           # True False
         self.optimizer_select = "adam"                          # adam sgd
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
