@@ -2,8 +2,10 @@ import os
 import sys
 import json
 import torch
+from torch.utils.data import DataLoader, WeightedRandomSampler
 import torch.nn as nn
 import torch.optim as optim
+import timm
 from torchvision import transforms, datasets
 from tqdm import tqdm
 from torchsummary import summary
@@ -15,13 +17,15 @@ from sklearn.metrics import mean_squared_error, mean_absolute_error
 from PIL import Image
 from PIL import ImageFile
 from config import Config
-from scnet import scnet34, scnet50, scnet101
 # ImageFile.LOAD_TRUNCATED_IMAGES = True
 # import PIL.ImageOps
 # from tqdm import tqdm
 
 
-def calc_tfpn(gt, pred, pos_label):
+cfg = Config()
+
+
+def calc_tpfn(gt, pred, pos_label):
     TP = 0
     TN = 0
     FP = 0
@@ -39,47 +43,118 @@ def calc_tfpn(gt, pred, pos_label):
     return TP, TN, FP, FN
 
 
+def adjust_lr_poly(optimizer, epoch, max_epochs, base_lr=0.1, power=0.9):
+    lr = base_lr * (1 - epoch / max_epochs) ** power
+    for param_group in optimizer.param_groups:
+        param_group['lr'] = lr
+
+
+class ScoringModel(nn.Module):
+    def __init__(self, num_cls_objects=4, num_reg_tasks=4):
+        super(ScoringModel, self).__init__()
+        self.backbone = timm.create_model(cfg.backbone_name, pretrained=True, features_only=True, out_indices=[4])
+
+        if cfg.freeze_feature_extractor_weights:
+            for param in self.backbone.parameters():
+                param.requires_grad = False
+
+        if cfg.backbone_name == 'resnet50':
+            self.mlp_classify = nn.Sequential(
+                nn.Linear(2048, 1024),
+                nn.ReLU(),
+                nn.Linear(1024, 512),
+                nn.ReLU(),
+                nn.Linear(512, num_cls_objects)
+            )
+            self.mlp_regress = nn.Sequential(
+                nn.Linear(2048, 1024),
+                nn.ReLU(),
+                nn.Linear(1024, 512),
+                nn.ReLU(),
+                nn.Linear(512, num_reg_tasks)
+            )
+        elif cfg.backbone_name == 'resnet18':
+            self.mlp_classify = nn.Sequential(
+                nn.Linear(512, 256),
+                nn.ReLU(),
+                nn.Linear(256, 128),
+                nn.ReLU(),
+                nn.Linear(128, num_cls_objects)
+            )
+            self.mlp_regress = nn.Sequential(
+                nn.Linear(512, 256),
+                nn.ReLU(),
+                nn.Linear(256, 128),
+                nn.ReLU(),
+                nn.Linear(128, num_reg_tasks)
+            )
+
+        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
+
+    def forward(self, x):
+        features = self.backbone(x)[0]
+        
+        features = self.avgpool(features)
+        features = torch.flatten(features, 1)
+        
+        output_cls = self.mlp_classify(features)
+        
+        output_reg = self.mlp_regress(features)
+        
+        return output_cls, output_reg
+
 
 def train_test():
     train_dataset = ds.Dataset(datatxt=cfg.train_txt, transform=cfg.data_transform['train'])
     test_dataset = ds.Dataset(datatxt=cfg.test_txt, transform=cfg.data_transform['test'])
 
-    train_loader = torch.utils.data.DataLoader(train_dataset,
-                                                batch_size=cfg.train_batch_size, shuffle=True,
-                                                num_workers=cfg.data_num_workers)
-    test_loader = torch.utils.data.DataLoader(test_dataset,
-                                                batch_size=cfg.test_batch_size, shuffle=False,
-                                                num_workers=cfg.data_num_workers)
+    # print(train_dataset.cls)
+    class_counts = torch.unique(torch.tensor(train_dataset.cls), return_counts=True)[1]
+    class_weights = 1. / class_counts.float()
+    sample_weights = [class_weights[cls] for cls in train_dataset.cls]
+    train_sampler = WeightedRandomSampler(sample_weights, len(train_dataset), replacement=True)
+    # exit(0)
 
-    print("using {} images for training, {} images for validation.".format(len(train_dataset),
-                                                                           len(test_dataset)))
-    
-    net = scnet50(num_scores=cfg.num_score_tasks, num_classes=cfg.num_classify_objects)
-    
-    pretext_model = torch.load(cfg.pretrained_model_path)
-    model_dict = net.state_dict()
-    state_dict = {k:v for k,v in pretext_model.items() if k in model_dict.keys()}
-    model_dict.update(state_dict)
-    net.load_state_dict(model_dict)
+    train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=cfg.train_batch_size, sampler=train_sampler, num_workers=cfg.data_num_workers)
+    # train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=cfg.train_batch_size, shuffle=True, num_workers=cfg.data_num_workers)
+    test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=cfg.test_batch_size, shuffle=False, num_workers=cfg.data_num_workers)
 
-    net = torch.nn.DataParallel(net, device_ids=cfg.device_ids)
+    print("using {} images for training, {} images for validation.".format(len(train_dataset), len(test_dataset)))
+
+    # net = initialize_model(cfg.num_classify_objects, feature_extracting)
+    # net = timm.create_model('resnet50', pretrained=True, num_classes=cfg.num_classify_objects)
+    
+    net = ScoringModel(cfg.num_classify_objects, cfg.num_score_tasks)
+
+    if len(cfg.device_ids) > 1:
+        net = torch.nn.DataParallel(net, device_ids=cfg.device_ids)
     net.to(cfg.device)
-    print("using {} device.".format(cfg.device_ids))
 
-    criterion_mse = nn.MSELoss()
-    criterion_ce = nn.CrossEntropyLoss()
+    loss_function_cls = nn.CrossEntropyLoss()
+    loss_function_reg = nn.MSELoss()
 
-    params = [p for p in net.parameters() if p.requires_grad]
-
-    optimizer = optim.Adam(params, lr=0.0001)
-    # optimizer = optim.SGD(params, lr=0.0001, momentum=0.9, weight_decay=5e-4)
-
-    epochs = cfg.max_train_epochs
+    optimizer = None
+    if cfg.optimizer_select == "adam":
+        optimizer = optim.Adam(net.parameters(), lr=cfg.initial_lr)
+    elif cfg.optimizer_select == "sgd":
+        optimizer = optim.SGD(net.parameters(), lr=cfg.initial_lr, momentum=0.9, weight_decay=5e-4)
 
     best_acc = 0.0
-    best_mae = 100.0
+    best_acc_list = [0.0, 0.0, 0.0, 0.0]
+
+    best_bacc = 0.0
+    best_bacc_list = [0.0, 0.0, 0.0, 0.0]
+    
+    best_avg_mae = 100.0
+    best_mae_sz = 100.0
+    best_mae_hd = 100.0
+    best_mae_xg = 100.0
+    best_mae_rr = 100.0
+
     train_steps = len(train_loader)
-    for epoch in range(epochs):
+    for epoch in range(cfg.max_train_epochs):
+        if cfg.flag_if_poly_adjust_lr:
+            adjust_lr_poly(optimizer, epoch, cfg.max_train_epochs, base_lr=cfg.initial_lr, power=0.9)
         # train
         net.train()
         running_loss = 0.0
@@ -88,291 +163,125 @@ def train_test():
             imgs, scores, cls = data
             optimizer.zero_grad()
 
-            predictions_scores, predictions_classify = net(imgs.to(cfg.device))
+            out_cls, out_reg = net(imgs.to(cfg.device))
 
-            weight = torch.tensor(cfg.c_score_weight).to(cfg.device)
-            predictions_scores = predictions_scores*weight
-            scores = torch.cat((scores[0].view(1, len(imgs)), scores[1].view(1, len(imgs)), scores[2].view(1, len(imgs)), scores[3].view(1, len(imgs))), 0).t()
-
-            loss_mse = criterion_mse(predictions_scores, scores.to(torch.float32).to(cfg.device))
-            loss_ce = criterion_ce(predictions_classify, cls.to(cfg.device))
-
-            loss = loss_mse + loss_ce
+            loss_cls = loss_function_cls(out_cls, cls.to(cfg.device))
+            loss_reg = loss_function_reg(out_reg, scores.to(cfg.device))
+            
+            loss = loss_cls + loss_reg
 
             loss.backward()
             optimizer.step()
             running_loss += loss.item()
-            train_bar.desc = "train epoch[{}/{}] loss:{:.3f} loss_mse:{:.3f} loss_ce:{:.3f}".format(epoch + 1,
-                                                                     epochs,
-                                                                     loss, loss_mse, loss_ce)
+            train_bar.desc = "train epoch[{}/{}], loss:{:.3f}, loss_cls:{:.3f}, loss_reg:{:.3f}".format(epoch + 1, cfg.max_train_epochs, loss, loss_cls, loss_reg)
         # validate
         net.eval()
-        mae_sz = 0.0
-        mae_hd = 0.0
-        mae_xg = 0.0
-        mae_rr = 0.0
+        acc = 0.0
         
+        temp = []
+
         tp_list = np.zeros(cfg.num_classify_objects).tolist()
         tn_list = np.zeros(cfg.num_classify_objects).tolist()
         fp_list = np.zeros(cfg.num_classify_objects).tolist()
         fn_list = np.zeros(cfg.num_classify_objects).tolist()
-        acc = 0.0
-        test_batch_num = 0
 
         with torch.no_grad():
             test_bar = tqdm(test_loader, file=sys.stdout)
             for test_data in test_bar:
-                test_batch_num += 1
                 test_images, test_labels_scores, test_lables_cls = test_data
-                outputs_scores, outputs_classify = net(test_images.to(cfg.device))
+                outputs_cls, outputs_reg = net(test_images.to(cfg.device))
+                
+                bbb = mean_absolute_error(outputs_reg.cpu(), test_labels_scores.cpu(), multioutput='raw_values')
+                temp.append(bbb * len(test_images))
 
-                #---------------------------回归---------------------------------
-                weight = torch.tensor(cfg.c_score_weight).to(cfg.device)
-                outputs_scores = outputs_scores*weight
-
-                test_labels_scores_sz = test_labels_scores[0]
-                test_labels_scores_hd = test_labels_scores[1]
-                test_labels_scores_xg = test_labels_scores[2]
-                test_labels_scores_rr = test_labels_scores[3]
-
-                test_predict_scores_sz = outputs_scores.t()[0].cpu()
-                test_predict_scores_hd = outputs_scores.t()[1].cpu()
-                test_predict_scores_xg = outputs_scores.t()[2].cpu()
-                test_predict_scores_rr = outputs_scores.t()[3].cpu()
-
-                mae_sz += mean_absolute_error(test_labels_scores_sz, test_predict_scores_sz)
-                mae_hd += mean_absolute_error(test_labels_scores_hd, test_predict_scores_hd)
-                mae_xg += mean_absolute_error(test_labels_scores_xg, test_predict_scores_xg)
-                mae_rr += mean_absolute_error(test_labels_scores_rr, test_predict_scores_rr)
-
-                #---------------------------分类---------------------------------
-                predict_y = torch.max(outputs_classify, dim=1)[1]
+                predict_y = torch.max(outputs_cls, dim=1)[1]
                 acc += torch.eq(predict_y, test_lables_cls.to(cfg.device)).sum().item()
-                
-                
+
                 labels_cls = test_lables_cls.cpu().numpy().tolist()
                 predicted_cls = predict_y.cpu().numpy().tolist()
                 
                 for kkk in range(cfg.num_classify_objects):
-                    temp_tp, temp_tn, temp_fp, temp_fn = calc_tfpn(labels_cls, predicted_cls, kkk)
+                    temp_tp, temp_tn, temp_fp, temp_fn = calc_tpfn(labels_cls, predicted_cls, kkk)
                     tp_list[kkk] += temp_tp
                     tn_list[kkk] += temp_tn
                     fp_list[kkk] += temp_fp
                     fn_list[kkk] += temp_fn
                 # print(tp_list)
-                
-        
-        tp_list = np.array(tp_list)
-        tn_list = np.array(tn_list)
-        fp_list = np.array(fp_list)
-        fn_list = np.array(fn_list)   
-        print(tp_list)
-
-        print("我更改了哦，来自于后湖的windows，你在209的centos能不能get到啊！")
-
-        mae_sz = mae_sz/test_batch_num
-        mae_hd = mae_hd/test_batch_num
-        mae_xg = mae_xg/test_batch_num
-        mae_rr = mae_rr/test_batch_num
-        test_mae_all = (mae_sz + mae_hd + mae_xg + mae_rr) / 4
-
-        # acc_banhenai = acc_banhenai/test_batch_num
-        # acc_banhengeda = acc_banhengeda/test_batch_num
-        # acc_weisuoxing = acc_weisuoxing/test_batch_num
-        # acc_zengshengxing = acc_zengshengxing/test_batch_num
-
-        print(tp_list)
-        print(fn_list)
+                  
+        # print(tp_list)
+        # print(fn_list)
         acc_banhenai = tp_list[0] / (tp_list[0] + fn_list[0])
         acc_banhengeda = tp_list[1] / (tp_list[1] + fn_list[1])
         acc_weisuoxing = tp_list[2] / (tp_list[2] + fn_list[2])
         acc_zengshengxing = tp_list[3] / (tp_list[3] + fn_list[3])
-
+        
         test_acc = acc / len(test_dataset)
 
-        print('[epoch %d] train_loss: %.3f  test_mae_sz: %.3f test_mae_hd: %.3f test_mae_xg: %.3f test_mae_rrd: %.3f test_acc_banhenai: %.3f test_acc_banhengeda: %.3f test_acc_weisuoxing: %.3f test_acc_zengshengxing: %.3f test_mae_all: %.3f test_acc: %.3f' %
-              (epoch + 1, running_loss / train_steps, mae_sz, mae_hd, mae_xg, mae_rr, acc_banhenai, acc_banhengeda, acc_weisuoxing, acc_zengshengxing, test_mae_all, test_acc))
-        print()
-            
-        if test_mae_all < best_mae:
-            best_mae = test_mae_all
-            save_path = '/media/E_4TB/WW/code/banhen/Banhen_Scoring/Banhen_multi/save_models/model_epoch_%d_mae_%0.3f_acc_%0.3f.pth'%(epoch + 1, test_mae_all, test_acc)
-            torch.save(net, save_path)
-        elif test_acc > best_acc:
+        test_bacc = (acc_banhenai + acc_banhengeda + acc_weisuoxing + acc_zengshengxing) / 4
+        
+        if test_acc > best_acc:
             best_acc = test_acc
-            save_path = '/media/E_4TB/WW/code/banhen/Banhen_Scoring/Banhen_multi/save_models/model_epoch_%d_mae_%0.3f_acc_%0.3f.pth'%(epoch + 1, test_mae_all, test_acc)
-            torch.save(net, save_path)
+            best_acc_list = [acc_banhenai, acc_banhengeda, acc_weisuoxing, acc_zengshengxing]
+
+        if test_bacc > best_bacc:
+            best_bacc = test_bacc
+            best_bacc_list = [acc_banhenai, acc_banhengeda, acc_weisuoxing, acc_zengshengxing]
+        
+        aaa = np.sum(temp, axis=0)
+        mae_sz = (aaa/len(test_dataset)).tolist()[0]
+        mae_hd = (aaa/len(test_dataset)).tolist()[1]
+        mae_xg = (aaa/len(test_dataset)).tolist()[2]
+        mae_rr = (aaa/len(test_dataset)).tolist()[3]
+
+        avg_mae = (1/3*mae_sz+1/4*mae_hd+1/3*mae_xg+1/5*mae_rr)/(1/3+1/4+1/3+1/5)
+        
+        if avg_mae < best_avg_mae:
+            best_avg_mae = avg_mae
+            best_mae_sz = mae_sz
+            best_mae_hd = mae_hd
+            best_mae_xg = mae_xg
+            best_mae_rr = mae_rr
+
+        print('[epoch %d] train_loss: %.3f, best_bacc: %.3f, best_bacc_list: [%.3f, %.3f, %.3f, %.3f], '
+              'best_acc: %.3f, best_acc_list: [%.3f, %.3f, %.3f, %.3f]' %
+              (epoch + 1, running_loss / train_steps, best_bacc, best_bacc_list[0], best_bacc_list[1], best_bacc_list[2], best_bacc_list[3],
+               best_acc, best_acc_list[0], best_acc_list[1], best_acc_list[2], best_acc_list[3]))
+
+        print('[epoch %d] train_loss: %.3f  best_mae_sz: %.3f best_mae_hd: %.3f best_mae_xg: %.3f best_mae_rr: %.3f best_avg_mae: %.3f' %
+            (epoch + 1, running_loss / train_steps, best_mae_sz, best_mae_hd, best_mae_xg, best_mae_rr, best_avg_mae))
+              
+        for param_group in optimizer.param_groups:
+            print(f"Epoch {epoch + 1}, Current Learning Rate: {param_group['lr']}")
+        print()
 
     print('Finished Training')
 
 
-# def test_one_img(img_name):
-#     net = torch.load('/media/E_4TB/WW/deep-learning-for-image-processing-master/pytorch_classification/Banhen_Scoring/save_models/model_epoch_44_mse_0.547.pth')
-#     net.eval()
-#     print("using {} device.".format(cfg.device_ids))
-
-#     # summary(net, input_size=[(3, 224, 224)], batch_size=1)
-
-#     img = Image.open(img_name).convert('RGB')
-#     img = cfg.test_transform(img).unsqueeze(0)
-
-#     weight = torch.tensor(cfg.c_score_weight).to(cfg.device)
-#     predict = net(img.to(cfg.device))*weight
-#     predict = predict.cpu().detach().numpy()[0]
-    
-#     print(predict)
-
-
-# def test_imgs_1b1():
-#     net = torch.load('/media/E_4TB/WW/deep-learning-for-image-processing-master/pytorch_classification/Banhen_Scoring/save_models/model_epoch_1_mae_2.651.pth')
-#     net.eval()
-#     print("using {} device.".format(cfg.device_ids))
-
-#     fh = open(cfg.test_txt, 'r')
-#     test_res_file = open(cfg.test_res_txt,mode='w')
-
-#     mae_list = []
-
-#     for line in tqdm(fh):
-#         line = line.rstrip()
-#         words = line.split(' ')
-#         img_name = ("/media/E_4TB/WW/dataset/AAA【已整理数据】瘢痕/【评分用】瘢痕/ScoreDataset/"+words[0]+'.jpg')
-#         score = [float(words[1]), float(words[2]), float(words[3]), float(words[4])]
-#         img = Image.open(img_name).convert('RGB')
-
-#         test_transform = cfg.test_transform
-
-#         img = test_transform(img).unsqueeze(0)
-
-#         weight = torch.tensor(cfg.c_score_weight).to(cfg.device)
-
-#         predict = net(img.to(cfg.device))*weight
-
-#         predict = predict.cpu().detach().numpy()[0]
-
-#         # test_res_file.writelines("img_name %s\n" % img_name)
-#         # test_res_file.writelines("label %s\n" % str(np.round(score,2)))
-#         # test_res_file.writelines("prdct %s\n" % str(np.round(predict,2)))
-#         # test_res_file.writelines("\n")
-
-
-#         mae_list.append(mean_absolute_error(score, predict))
-
-#         # print("img_name", img_name)
-#         # print("label", np.round(score,2))
-#         # print("prdct", np.round(predict,2))
-#         # print("mae", mean_absolute_error(score, predict))
-#         # print("\n")
-#     print("mae", np.array(mae_list).sum()/len(mae_list))
-
-
 def test():
-    net = torch.load('/media/E_4TB/WW/code/banhen/Banhen_Scoring/Banhen_multi/save_models1024+PA(dim2)/2/2)/model_epoch_53_mae_0.568_acc_0.858.pth')
-    test_dataset = ds.Dataset(datatxt=cfg.test_txt, transform=cfg.data_transform['test'])
+    net = torch.load('/media/E_4TB/WW/deep-learning-for-image-processing-master/pytorch_classification/Banhen_Scoring/save_models_classify_only/model_epoch_13_acc_0.543.pth')
+    test_dataset = ds.Dataset(datatxt=cfg.test_txt, transform=cfg.test_transform)
     test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=cfg.test_batch_size, shuffle=False, num_workers=cfg.data_num_workers)
 
     print("using {} images for test.".format(len(test_dataset)))
 
     net.eval()
-    mae_sz = 0.0
-    mae_hd = 0.0
-    mae_xg = 0.0
-    mae_rr = 0.0
-    
-    
-    tp_list = np.zeros(cfg.num_classify_objects).tolist()
-    tn_list = np.zeros(cfg.num_classify_objects).tolist()
-    fp_list = np.zeros(cfg.num_classify_objects).tolist()
-    fn_list = np.zeros(cfg.num_classify_objects).tolist()
-    
     acc = 0.0
-    test_batch_num = 0
 
     with torch.no_grad():
         test_bar = tqdm(test_loader, file=sys.stdout)
         for test_data in test_bar:
-            test_batch_num += 1
             test_images, test_labels_scores, test_lables_cls = test_data
-            outputs_scores, outputs_classify = net(test_images.to(cfg.device))
+            outputs = net(test_images.to(cfg.device))
 
-            #---------------------------回归---------------------------------
-            weight = torch.tensor(cfg.c_score_weight).to(cfg.device)
-            outputs_scores = outputs_scores*weight
-
-            test_labels_scores_sz = test_labels_scores[0]
-            test_labels_scores_hd = test_labels_scores[1]
-            test_labels_scores_xg = test_labels_scores[2]
-            test_labels_scores_rr = test_labels_scores[3]
-
-            test_predict_scores_sz = outputs_scores.t()[0].cpu()
-            test_predict_scores_hd = outputs_scores.t()[1].cpu()
-            test_predict_scores_xg = outputs_scores.t()[2].cpu()
-            test_predict_scores_rr = outputs_scores.t()[3].cpu()
-
-            mae_sz += mean_absolute_error(test_labels_scores_sz, test_predict_scores_sz)
-            mae_hd += mean_absolute_error(test_labels_scores_hd, test_predict_scores_hd)
-            mae_xg += mean_absolute_error(test_labels_scores_xg, test_predict_scores_xg)
-            mae_rr += mean_absolute_error(test_labels_scores_rr, test_predict_scores_rr)
-
-            #---------------------------分类---------------------------------
-            predict_y = torch.max(outputs_classify, dim=1)[1]
+            predict_y = torch.max(outputs, dim=1)[1]
             acc += torch.eq(predict_y, test_lables_cls.to(cfg.device)).sum().item()
-            
-            labels_cls = test_lables_cls.cpu().numpy().tolist()
-            predicted_cls = predict_y.cpu().numpy().tolist()
-            
-            
-            for kkk in range(cfg.num_classify_objects):
-                temp_tp, temp_tn, temp_fp, temp_fn = calc_tfpn(labels_cls, predicted_cls, kkk)
-                tp_list[kkk] += temp_tp
-                tn_list[kkk] += temp_tn
-                fp_list[kkk] += temp_fp
-                fn_list[kkk] += temp_fn
-                
-        
-        # acc_banhenai = (tp_list[0] + tn_list[0]) / len(test_dataset)
-        # acc_banhengeda = (tp_list[1] + tn_list[1]) / len(test_dataset)
-        # acc_weisuoxing = (tp_list[2] + tn_list[2]) / len(test_dataset)
-        # acc_zengshengxing = (tp_list[3] + tn_list[3]) / len(test_dataset)
-        
-        print(tp_list)
-        print(fn_list)
-        acc_banhenai = tp_list[0] / (tp_list[0] + fn_list[0])
-        acc_banhengeda = tp_list[1] / (tp_list[1] + fn_list[1])
-        acc_weisuoxing = tp_list[2] / (tp_list[2] + fn_list[2])
-        acc_zengshengxing = tp_list[3] / (tp_list[3] + fn_list[3])
-        
-        
-        
-        tp_list = np.array(tp_list)
-        tn_list = np.array(tn_list)
-        fp_list = np.array(fp_list)
-        fn_list = np.array(fn_list)   
-        
-        
-        current_sen = sum((tp_list / (tp_list + fn_list)).tolist())/cfg.num_classify_objects
-        current_spe = sum((tn_list / (fp_list + tn_list)).tolist())/cfg.num_classify_objects
-
-
-        mae_sz = mae_sz/test_batch_num
-        mae_hd = mae_hd/test_batch_num
-        mae_xg = mae_xg/test_batch_num
-        mae_rr = mae_rr/test_batch_num
-        test_mae_all = (mae_sz + mae_hd + mae_xg + mae_rr) / 4
 
         test_acc = acc / len(test_dataset)
+        print('test_mae_sz: %.3f test_acc: %.3f' % (test_acc))
 
-        # print(test_mae_all)
-        # print('test_mae_sz: %.3f test_mae_hd: %.3f test_mae_xg: %.3f test_mae_rrd: %.3f test_mae_all: %.3f test_acc: %.3f' %
-        #         (mae_sz, mae_hd, mae_xg, mae_rr, test_mae_all, test_acc))
-        
-        print('test_mae_sz: %.3f test_mae_hd: %.3f test_mae_xg: %.3f test_mae_rrd: %.3f test_acc_banhenai: %.3f test_acc_banhengeda: %.3f test_acc_weisuoxing: %.3f test_acc_zengshengxing: %.3f test_mae_all: %.3f test_acc: %.3f' %
-              (mae_sz, mae_hd, mae_xg, mae_rr, acc_banhenai, acc_banhengeda, acc_weisuoxing, acc_zengshengxing, test_mae_all, test_acc))
 
 if __name__ == '__main__':
 
-    cfg = Config()
-
-    # train_test()
+    train_test()
     # test_one_img("/media/E_4TB/WW/dataset/AAA【已整理数据】瘢痕/【评分用】瘢痕/ScoreDataset/%s.jpg" % "943-257")
-    test()
+    # test()

@@ -20,8 +20,9 @@ from PIL import ImageFile
 class Config():
     def __init__(self,):
         os.environ["CUDA_VISIBLE_DEVICES"] = "2, 3"
-        self.model_name = 'resnet50'   # 'resnet50' 'resnet18'
-        self.optimizer_select = "adam"                       # adam sgd
+        self.backbone_name = 'resnet50'                            # resnet50 resnet18
+        self.freeze_feature_extractor_weights = False           # True False
+        self.optimizer_select = "adam"                          # adam sgd
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.device_ids = [0, 1]
         self.train_batch_size = 16
@@ -30,8 +31,8 @@ class Config():
         # self.c_score_weight = [3, 4, 3, 5]
         self.initial_lr = 0.0001                            # 0.01 0.001 0.0001
         self.flag_if_poly_adjust_lr = False                  # True False
-        self.num_score_tasks = 4        # 4个回归任务：sz hd xg rr
         self.num_classify_objects = 4   # 4个分类目标：0-瘢痕癌，1-瘢痕疙瘩，2-萎缩性瘢痕， 3-增生性瘢痕
+        self.num_score_tasks = 4        # 4个回归任务：sz hd xg rr
 
         self.train_txt = "/media/D_4TB/SUGURS/Banhen_multi/train.txt"
         self.test_txt = "/media/D_4TB/SUGURS/Banhen_multi/test.txt"
