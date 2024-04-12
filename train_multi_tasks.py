@@ -168,7 +168,7 @@ def train_test():
         fn_list = np.array(fn_list)   
         print(tp_list)
 
-        print("xxxsas1x")
+        print("1wqwqwqwqwqwqw")
 
         mae_sz = mae_sz/test_batch_num
         mae_hd = mae_hd/test_batch_num
