@@ -67,6 +67,11 @@ class ScoringModel(nn.Module):
                 # nn.ReLU(),
                 # nn.Linear(512, num_cls_objects)
 
+                # nn.Linear(2048, 128),
+                # nn.ReLU(),
+                # nn.Dropout(0.5),
+                # nn.Linear(128, num_cls_objects)
+
                 nn.Linear(2048, num_cls_objects)
             )
             self.mlp_regress = nn.Sequential(
@@ -75,6 +80,12 @@ class ScoringModel(nn.Module):
                 # nn.Linear(1024, 512),
                 # nn.ReLU(),
                 # nn.Linear(512, num_reg_tasks)
+
+                # nn.Linear(2048, 128),
+                # nn.ReLU(),
+                # nn.Dropout(0.5),
+                # nn.Linear(128, num_reg_tasks)
+
                 nn.Linear(2048, num_reg_tasks)
             )
         elif cfg.backbone_name == 'resnet18':
@@ -84,6 +95,12 @@ class ScoringModel(nn.Module):
                 # nn.Linear(256, 128),
                 # nn.ReLU(),
                 # nn.Linear(128, num_cls_objects)
+
+                # nn.Linear(512, 1024),
+                # nn.ReLU(),
+                # nn.Dropout(0.5),
+                # nn.Linear(1024, num_cls_objects)
+
                 nn.Linear(512, num_cls_objects)
             )
             self.mlp_regress = nn.Sequential(
@@ -92,6 +109,12 @@ class ScoringModel(nn.Module):
                 # nn.Linear(256, 128),
                 # nn.ReLU(),
                 # nn.Linear(128, num_reg_tasks)
+
+                # nn.Linear(512, 1024),
+                # nn.ReLU(),
+                # nn.Dropout(0.5),
+                # nn.Linear(1024, num_reg_tasks)
+
                 nn.Linear(512, num_reg_tasks)
             )
 
