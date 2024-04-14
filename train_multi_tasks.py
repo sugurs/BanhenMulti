@@ -61,61 +61,69 @@ class ScoringModel(nn.Module):
 
         if cfg.backbone_name == 'resnet50':
             self.mlp_classify = nn.Sequential(
-                # nn.Linear(2048, 1024),
-                # nn.ReLU(),
-                # nn.Linear(1024, 512),
-                # nn.ReLU(),
-                # nn.Linear(512, num_cls_objects)
+                nn.Linear(2048, 512),
+                nn.ReLU(),
+                nn.Dropout(0.5),
+                nn.Linear(512, 128),
+                nn.ReLU(),
+                nn.Dropout(0.5),
+                nn.Linear(128, num_cls_objects)
 
                 # nn.Linear(2048, 128),
                 # nn.ReLU(),
                 # nn.Dropout(0.5),
                 # nn.Linear(128, num_cls_objects)
 
-                nn.Linear(2048, num_cls_objects)
+                # nn.Linear(2048, num_cls_objects)
             )
             self.mlp_regress = nn.Sequential(
-                # nn.Linear(2048, 1024),
-                # nn.ReLU(),
-                # nn.Linear(1024, 512),
-                # nn.ReLU(),
-                # nn.Linear(512, num_reg_tasks)
+                nn.Linear(2048, 512),
+                nn.ReLU(),
+                nn.Dropout(0.5),
+                nn.Linear(512, 128),
+                nn.ReLU(),
+                nn.Dropout(0.5),
+                nn.Linear(128, num_reg_tasks)
 
                 # nn.Linear(2048, 128),
                 # nn.ReLU(),
                 # nn.Dropout(0.5),
                 # nn.Linear(128, num_reg_tasks)
 
-                nn.Linear(2048, num_reg_tasks)
+                # nn.Linear(2048, num_reg_tasks)
             )
         elif cfg.backbone_name == 'resnet18':
             self.mlp_classify = nn.Sequential(
-                # nn.Linear(512, 256),
-                # nn.ReLU(),
-                # nn.Linear(256, 128),
-                # nn.ReLU(),
-                # nn.Linear(128, num_cls_objects)
+                nn.Linear(512, 256),
+                nn.ReLU(),
+                nn.Dropout(0.5),
+                nn.Linear(256, 128),
+                nn.ReLU(),
+                nn.Dropout(0.5),
+                nn.Linear(128, num_cls_objects)
 
                 # nn.Linear(512, 1024),
                 # nn.ReLU(),
                 # nn.Dropout(0.5),
                 # nn.Linear(1024, num_cls_objects)
 
-                nn.Linear(512, num_cls_objects)
+                # nn.Linear(512, num_cls_objects)
             )
             self.mlp_regress = nn.Sequential(
-                # nn.Linear(512, 256),
-                # nn.ReLU(),
-                # nn.Linear(256, 128),
-                # nn.ReLU(),
-                # nn.Linear(128, num_reg_tasks)
+                nn.Linear(512, 256),
+                nn.ReLU(),
+                nn.Dropout(0.5),
+                nn.Linear(256, 128),
+                nn.ReLU(),
+                nn.Dropout(0.5),
+                nn.Linear(128, num_reg_tasks)
 
                 # nn.Linear(512, 1024),
                 # nn.ReLU(),
                 # nn.Dropout(0.5),
                 # nn.Linear(1024, num_reg_tasks)
 
-                nn.Linear(512, num_reg_tasks)
+                # nn.Linear(512, num_reg_tasks)
             )
 
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
