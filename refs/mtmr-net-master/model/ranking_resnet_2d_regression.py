@@ -201,6 +201,7 @@ class RankingResNet(nn.Module):
         out = out.view(out.size(0), -1)
 
         attribute_feature = self.attribute_feature_fc(out)
+
         subtlety_score = self.attribute_subtlety_score_fc(attribute_feature)
         internalStructure_score = self.attribute_internalStructure_score_fc(attribute_feature)
         calcification_score = self.attribute_calcification_score_fc(attribute_feature)
@@ -216,7 +217,8 @@ class RankingResNet(nn.Module):
 
         out = self.classifier(out)
 
-        return out, [subtlety_score, internalStructure_score, calcification_score, sphericity_score, margin_score, lobulation_score, spiculation_score, texture_score]
+        return out, [subtlety_score, internalStructure_score, calcification_score,
+                     sphericity_score, margin_score, lobulation_score, spiculation_score, texture_score]
         # return out, [subtlety_score, internalStructure_score, calcification_score, sphericity_score,
         #              margin_score, lobulation_score, spiculation_score, texture_score]
 
@@ -226,8 +228,9 @@ class RankingResNet(nn.Module):
         # return output_1, attribute_score_1
 
         input_1 = input[0:int(input.shape[0]/2), :, :, :]
-        print input_1.shape
+        print(input_1.shape)
         input_2 = input[int(input.shape[0]/2):input.shape[0], :, :, :]
+
         output_1, attribute_score_1 = self.forward_once(input_1)
         output_2, attribute_score_2 = self.forward_once(input_2)
 

@@ -471,7 +471,7 @@ class ModelHandler(object):
     def train(self, training_params):
         folder_num, folder_list = self._get_folders_info_from_dict(training_params)
         for i in folder_list:
-            print "Folder ~~~~~~~~~~~~~~~~~~~~~~~~", i
+            print("Folder ~~~~~~~~~~~~~~~~~~~~~~~~", i)
 
             writer, json_filepath = self._generate_log_dir_and_writer(training_params, i)
 
@@ -483,7 +483,7 @@ class ModelHandler(object):
             self._set_up_model(training_params, i)
 
             visiable_gpu_device_num = self._config_gpu_info(training_params)
-            print "\nVisiable gpu number:{}\n".format(t.cuda.device_count())
+            print("\nVisiable gpu number:{}\n".format(t.cuda.device_count()))
             self._transfer_data_to_gpu(self.model, visiable_gpu_device_num=visiable_gpu_device_num)
 
             # step 3: criterion and optimizer
