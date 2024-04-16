@@ -62,11 +62,25 @@ class ScoringModel(nn.Module):
         if cfg.backbone_name in ['resnet50', 'resnet101', 'resnet152']:
             self.fc_classify = nn.Linear(2048 + 256, 4)
             self.fc_regression_1 = nn.Linear(2048, 256)
-            self.fc_regression_2 = nn.Linear(256, 4)
+            if cfg.flag_regression_four_split:
+                self.fc_regression_2_sz = nn.Linear(256, 1)
+                self.fc_regression_2_hd = nn.Linear(256, 1)
+                self.fc_regression_2_xg = nn.Linear(256, 1)
+                self.fc_regression_2_rr = nn.Linear(256, 1)
+            else:
+                self.fc_regression_2 = nn.Linear(256, 4)
         elif cfg.backbone_name in ['resnet18', 'resnet34']:
             self.fc_classify = nn.Linear(512 + 64, 4)
             self.fc_regression_1 = nn.Linear(512, 64)
-            self.fc_regression_2 = nn.Linear(64, 4)
+
+            if cfg.flag_regression_four_split:
+                self.fc_regression_2_sz = nn.Linear(64, 1)
+                self.fc_regression_2_hd = nn.Linear(64, 1)
+                self.fc_regression_2_xg = nn.Linear(64, 1)
+                self.fc_regression_2_rr = nn.Linear(64, 1)
+            else:
+                self.fc_regression_2 = nn.Linear(64, 4)
+
         self.dropout = nn.Dropout2d(0.5)
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
 
@@ -79,7 +93,14 @@ class ScoringModel(nn.Module):
 
         output_cls = self.fc_classify(feat_cls)
 
-        output_reg = self.fc_regression_2(feat_reg_1)
+        if cfg.flag_regression_four_split:
+            out_reg_sz = self.fc_regression_2_sz(feat_reg_1)
+            out_reg_hd = self.fc_regression_2_hd(feat_reg_1)
+            out_reg_xg = self.fc_regression_2_xg(feat_reg_1)
+            out_reg_rr = self.fc_regression_2_rr(feat_reg_1)
+            output_reg = [out_reg_sz, out_reg_hd, out_reg_xg, out_reg_rr]
+        else:
+            output_reg = self.fc_regression_2(feat_reg_1)
 
         return output_cls, output_reg
 
@@ -140,13 +161,21 @@ def train_test():
         running_loss = 0.0
         train_bar = tqdm(train_loader, file=sys.stdout)
         for _, data in enumerate(train_bar):
-            imgs, scores, cls = data
+            imgs, scores, cls, scores_list = data
             optimizer.zero_grad()
 
-            out_cls, out_reg = net(imgs.to(cfg.device))
+            out_cls, out_reg, out_reg_list = net(imgs.to(cfg.device))
 
             loss_cls = loss_function_cls(out_cls, cls.to(cfg.device))
-            loss_reg = loss_function_reg(out_reg, scores.to(cfg.device))
+
+            if cfg.flag_regression_four_split:
+                loss_reg_sz = loss_function_reg(out_reg_list[0], scores_list[0].to(cfg.device))
+                loss_reg_hd = loss_function_reg(out_reg_list[1], scores_list[1].to(cfg.device))
+                loss_reg_xg = loss_function_reg(out_reg_list[2], scores_list[2].to(cfg.device))
+                loss_reg_rr = loss_function_reg(out_reg_list[3], scores_list[3].to(cfg.device))
+                loss_reg = loss_reg_sz + loss_reg_hd + loss_reg_xg + loss_reg_rr
+            else:
+                loss_reg = loss_function_reg(out_reg, scores.to(cfg.device))
             
             loss = loss_cls + loss_reg
 
@@ -159,6 +188,10 @@ def train_test():
         acc = 0.0
         
         temp = []
+        temp_sz = []
+        temp_hd = []
+        temp_xg = []
+        temp_rr = []
 
         tp_list = np.zeros(cfg.num_classify_objects).tolist()
         tn_list = np.zeros(cfg.num_classify_objects).tolist()
@@ -168,11 +201,24 @@ def train_test():
         with torch.no_grad():
             test_bar = tqdm(test_loader, file=sys.stdout)
             for test_data in test_bar:
-                test_images, test_labels_scores, test_lables_cls = test_data
-                outputs_cls, outputs_reg = net(test_images.to(cfg.device))
-                
-                bbb = mean_absolute_error(outputs_reg.cpu(), test_labels_scores.cpu(), multioutput='raw_values')
-                temp.append(bbb * len(test_images))
+                test_images, test_labels_scores, test_lables_cls, test_lables_scores_list = test_data
+                outputs_cls, outputs_reg, out_reg_list = net(test_images.to(cfg.device))
+
+                if cfg.flag_regression_four_split:
+                    bbb_sz = mean_absolute_error(out_reg_list[0].cpu(), test_lables_scores_list[0].cpu())
+                    temp_sz.append(bbb_sz * len(test_images))
+
+                    bbb_hd = mean_absolute_error(out_reg_list[1].cpu(), test_lables_scores_list[1].cpu())
+                    temp_hd.append(bbb_hd * len(test_images))
+
+                    bbb_xg = mean_absolute_error(out_reg_list[2].cpu(), test_lables_scores_list[2].cpu())
+                    temp_xg.append(bbb_xg * len(test_images))
+
+                    bbb_rr = mean_absolute_error(out_reg_list[3].cpu(), test_lables_scores_list[3].cpu())
+                    temp_rr.append(bbb_rr * len(test_images))
+                else:
+                    bbb = mean_absolute_error(outputs_reg.cpu(), test_labels_scores.cpu(), multioutput='raw_values')
+                    temp.append(bbb * len(test_images))
 
                 predict_y = torch.max(outputs_cls, dim=1)[1]
                 acc += torch.eq(predict_y, test_lables_cls.to(cfg.device)).sum().item()
@@ -206,12 +252,18 @@ def train_test():
         if test_bacc > best_bacc:
             best_bacc = test_bacc
             best_bacc_list = [acc_banhenai, acc_banhengeda, acc_weisuoxing, acc_zengshengxing]
-        
-        aaa = np.sum(temp, axis=0)
-        mae_sz = (aaa/len(test_dataset)).tolist()[0]
-        mae_hd = (aaa/len(test_dataset)).tolist()[1]
-        mae_xg = (aaa/len(test_dataset)).tolist()[2]
-        mae_rr = (aaa/len(test_dataset)).tolist()[3]
+
+        if cfg.flag_regression_four_split:
+            mae_sz = sum(temp_sz)/len(test_dataset)
+            mae_hd = sum(temp_hd)/len(test_dataset)
+            mae_xg = sum(temp_xg)/len(test_dataset)
+            mae_rr = sum(temp_rr)/len(test_dataset)
+        else:
+            aaa = np.sum(temp, axis=0)
+            mae_sz = (aaa/len(test_dataset)).tolist()[0]
+            mae_hd = (aaa/len(test_dataset)).tolist()[1]
+            mae_xg = (aaa/len(test_dataset)).tolist()[2]
+            mae_rr = (aaa/len(test_dataset)).tolist()[3]
 
         avg_mae = (1/3*mae_sz+1/4*mae_hd+1/3*mae_xg+1/5*mae_rr)/(1/3+1/4+1/3+1/5)
         

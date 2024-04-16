@@ -9,7 +9,10 @@ import pandas as pd
 import os
 import torchvision.transforms as transforms
 import torch
+from config import Config
 
+# dingyi config
+cfg = Config()
 
 data_transforms = {
     'train': transforms.Compose([
@@ -35,12 +38,22 @@ class Dataset(Dataset):
         fh = open(datatxt, 'r')
         imgs = []
         scores = []
+        scores_sz = []
+        scores_hd = []
+        scores_xg = []
+        scores_rr = []
+
         cls = []
         for line in fh:
             line = line.rstrip()
             words = line.split(' ')
             imgs.append("/media/E_4TB/WW/dataset/AAA【已整理数据】瘢痕/【评分用】瘢痕/ScoreDataset/"+words[0]+'.jpg')
             scores.append([float(words[1]), float(words[2]), float(words[3]), float(words[4])])
+            scores_sz.append(float(words[1]))
+            scores_hd.append(float(words[2]))
+            scores_xg.append(float(words[3]))
+            scores_rr.append(float(words[4]))
+
             if words[0][0:3] == "114":
                 cls.append(0)
             elif words[0][0:3] == "943":
@@ -53,6 +66,11 @@ class Dataset(Dataset):
                 cls.append(3)
         self.imgs = imgs
         self.scores = scores
+        self.scores_sz = scores_sz
+        self.scores_hd = scores_hd
+        self.scores_xg = scores_xg
+        self.scores_rr = scores_rr
+
         self.cls = cls
         self.transform = transform
 
@@ -60,12 +78,17 @@ class Dataset(Dataset):
         img = Image.open(self.imgs[index]).convert('RGB')
         # scores = self.scores[index]
         scores = torch.tensor(self.scores[index], dtype=torch.float32)
+        scores_sz = torch.tensor(self.scores_sz[index], dtype=torch.float32)
+        scores_hd = torch.tensor(self.scores_hd[index], dtype=torch.float32)
+        scores_xg = torch.tensor(self.scores_xg[index], dtype=torch.float32)
+        scores_rr = torch.tensor(self.scores_rr[index], dtype=torch.float32)
+
         cls = self.cls[index]
 
         if self.transform is not None:
             img = self.transform(img)
 
-        return img, scores, cls
+        return img, scores, cls, [scores_sz, scores_hd, scores_xg, scores_rr]
 
     def __len__(self):
         return len(self.imgs)
