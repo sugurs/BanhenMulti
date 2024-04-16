@@ -59,35 +59,85 @@ class ScoringModel(nn.Module):
             for param in self.backbone.parameters():
                 param.requires_grad = False
 
-        if cfg.backbone_name in ['resnet50', 'resnet101', 'resnet152']:
-            self.fc_classify = nn.Linear(2048 + 256, 4)
-            self.fc_regression_1 = nn.Sequential(
-                nn.Linear(2048, 256),
+        if cfg.backbone_name == 'resnet50':
+            self.mlp_classify = nn.Sequential(
+                nn.Linear(2048, 512),
                 nn.ReLU(),
-                nn.Dropout(0.5)
-            )
-            self.fc_regression_2 = nn.Linear(256, 4)
-        elif cfg.backbone_name in ['resnet18', 'resnet34']:
-            self.fc_classify = nn.Linear(512 + 64, 4)
-            self.fc_regression_1 = nn.Sequential(
-                nn.Linear(512, 64),
+                nn.Dropout(0.5),
+                nn.Linear(512, 128),
                 nn.ReLU(),
-                nn.Dropout(0.5)
+                nn.Dropout(0.5),
+                nn.Linear(128, num_cls_objects)
+
+                # nn.Linear(2048, 128),
+                # nn.ReLU(),
+                # nn.Dropout(0.5),
+                # nn.Linear(128, num_cls_objects)
+
+                # nn.Linear(2048, num_cls_objects)
             )
-            self.fc_regression_2 = nn.Linear(64, 4)
+            self.mlp_regress = nn.Sequential(
+                nn.Linear(2048, 512),
+                nn.ReLU(),
+                nn.Dropout(0.5),
+                nn.Linear(512, 128),
+                nn.ReLU(),
+                nn.Dropout(0.5),
+                nn.Linear(128, num_reg_tasks)
+
+                # nn.Linear(2048, 128),
+                # nn.ReLU(),
+                # nn.Dropout(0.5),
+                # nn.Linear(128, num_reg_tasks)
+
+                # nn.Linear(2048, num_reg_tasks)
+            )
+        elif cfg.backbone_name == 'resnet18':
+            self.mlp_classify = nn.Sequential(
+                nn.Linear(512, 256),
+                nn.ReLU(),
+                nn.Dropout(0.5),
+                nn.Linear(256, 128),
+                nn.ReLU(),
+                nn.Dropout(0.5),
+                nn.Linear(128, num_cls_objects)
+
+                # nn.Linear(512, 1024),
+                # nn.ReLU(),
+                # nn.Dropout(0.5),
+                # nn.Linear(1024, num_cls_objects)
+
+                # nn.Linear(512, num_cls_objects)
+            )
+            self.mlp_regress = nn.Sequential(
+                nn.Linear(512, 256),
+                nn.ReLU(),
+                nn.Dropout(0.5),
+                nn.Linear(256, 128),
+                nn.ReLU(),
+                nn.Dropout(0.5),
+                nn.Linear(128, num_reg_tasks)
+
+                # nn.Linear(512, 1024),
+                # nn.ReLU(),
+                # nn.Dropout(0.5),
+                # nn.Linear(1024, num_reg_tasks)
+
+                # nn.Linear(512, num_reg_tasks)
+            )
 
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
 
     def forward(self, x):
-        feat = torch.flatten(self.avgpool(self.backbone(x)[0]), 1)
+        features = self.backbone(x)[0]
         
-        feat_reg_1 = self.fc_regression_1(feat)
-
-        feat_cls = torch.cat((feat, feat_reg_1), dim=1)
-        output_cls = self.fc_classify(feat_cls)
-
-        output_reg = self.fc_regression_2(feat_reg_1)
-
+        features = self.avgpool(features)
+        features = torch.flatten(features, 1)
+        
+        output_cls = self.mlp_classify(features)
+        
+        output_reg = self.mlp_regress(features)
+        
         return output_cls, output_reg
 
 
