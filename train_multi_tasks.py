@@ -72,7 +72,6 @@ class ScoringModel(nn.Module):
         elif cfg.backbone_name in ['resnet18', 'resnet34']:
             self.fc_classify = nn.Linear(512 + 64, 4)
             self.fc_regression_1 = nn.Linear(512, 64)
-
             if cfg.flag_regression_four_split:
                 self.fc_regression_2_sz = nn.Linear(64, 1)
                 self.fc_regression_2_hd = nn.Linear(64, 1)
