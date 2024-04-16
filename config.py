@@ -30,7 +30,7 @@ class Config():
         self.max_train_epochs = 100
         # self.c_score_weight = [3, 4, 3, 5]
         self.initial_lr = 0.0001                            # 0.01 0.001 0.0001
-        self.flag_if_poly_adjust_lr = True                  # True False
+        self.flag_if_poly_adjust_lr = False                 # True False
         self.num_classify_objects = 4   # 4个分类目标：0-瘢痕癌，1-瘢痕疙瘩，2-萎缩性瘢痕， 3-增生性瘢痕
         self.num_score_tasks = 4        # 4个回归任务：sz hd xg rr
 
