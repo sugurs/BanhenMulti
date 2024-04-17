@@ -19,15 +19,15 @@ from PIL import ImageFile
 
 class Config():
     def __init__(self,):
-        os.environ["CUDA_VISIBLE_DEVICES"] = "2, 3"
-        self.backbone_name = 'resnet50'                         # resnet50 resnet18
+        os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1, 2, 3"
+        self.backbone_name = 'resnet152'                        # resnet50 resnet18
         self.freeze_feature_extractor_weights = False           # True False
         self.flag_if_poly_adjust_lr = False                     # True False
         self.flag_regression_four_split = True                  # True False
 
         self.optimizer_select = "adam"                          # adam sgd
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.device_ids = [0, 1]
+        self.device_ids = [0, 1, 2, 3]
         self.train_batch_size = 16
         self.test_batch_size = 100
         self.max_train_epochs = 100

@@ -61,7 +61,11 @@ class ScoringModel(nn.Module):
 
         if cfg.backbone_name in ['resnet50', 'resnet101', 'resnet152']:
             self.fc_classify = nn.Linear(2048 + 256, 4)
-            self.fc_regression_1 = nn.Linear(2048, 256)
+            self.fc_regression_1 = nn.Sequential(
+                nn.Linear(2048, 256),
+                nn.ReLU(),
+                nn.Dropout(0.5)
+            )
             if cfg.flag_regression_four_split:
                 self.fc_regression_2_sz = nn.Linear(256, 1)
                 self.fc_regression_2_hd = nn.Linear(256, 1)
@@ -71,7 +75,11 @@ class ScoringModel(nn.Module):
                 self.fc_regression_2 = nn.Linear(256, 4)
         elif cfg.backbone_name in ['resnet18', 'resnet34']:
             self.fc_classify = nn.Linear(512 + 64, 4)
-            self.fc_regression_1 = nn.Linear(512, 64)
+            self.fc_regression_1 = nn.Sequential(
+                nn.Linear(512, 64),
+                nn.ReLU(),
+                nn.Dropout(0.5)
+            )
             if cfg.flag_regression_four_split:
                 self.fc_regression_2_sz = nn.Linear(64, 1)
                 self.fc_regression_2_hd = nn.Linear(64, 1)
@@ -80,7 +88,7 @@ class ScoringModel(nn.Module):
             else:
                 self.fc_regression_2 = nn.Linear(64, 4)
 
-        self.dropout = nn.Dropout2d(0.5)
+        # self.dropout = nn.Dropout2d(0.5)
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
 
     def forward(self, x):
@@ -88,7 +96,7 @@ class ScoringModel(nn.Module):
         
         feat_reg_1 = self.fc_regression_1(feat)
 
-        feat_cls = self.dropout(torch.cat((feat_reg_1, feat), dim=1))
+        feat_cls = torch.cat((feat_reg_1, feat), dim=1)
 
         output_cls = self.fc_classify(feat_cls)
 
@@ -163,16 +171,16 @@ def train_test():
             imgs, scores, cls, scores_list = data
             optimizer.zero_grad()
 
-            out_cls, out_reg, out_reg_list = net(imgs.to(cfg.device))
+            out_cls, out_reg = net(imgs.to(cfg.device))
 
             loss_cls = loss_function_cls(out_cls, cls.to(cfg.device))
 
             if cfg.flag_regression_four_split:
-                loss_reg_sz = loss_function_reg(out_reg_list[0], scores_list[0].to(cfg.device))
-                loss_reg_hd = loss_function_reg(out_reg_list[1], scores_list[1].to(cfg.device))
-                loss_reg_xg = loss_function_reg(out_reg_list[2], scores_list[2].to(cfg.device))
-                loss_reg_rr = loss_function_reg(out_reg_list[3], scores_list[3].to(cfg.device))
-                loss_reg = loss_reg_sz + loss_reg_hd + loss_reg_xg + loss_reg_rr
+                loss_reg_sz = loss_function_reg(out_reg[0], scores_list[0].to(cfg.device).unsqueeze(1))
+                loss_reg_hd = loss_function_reg(out_reg[1], scores_list[1].to(cfg.device).unsqueeze(1))
+                loss_reg_xg = loss_function_reg(out_reg[2], scores_list[2].to(cfg.device).unsqueeze(1))
+                loss_reg_rr = loss_function_reg(out_reg[3], scores_list[3].to(cfg.device).unsqueeze(1))
+                loss_reg = (loss_reg_sz + loss_reg_hd + loss_reg_xg + loss_reg_rr) / 4.0
             else:
                 loss_reg = loss_function_reg(out_reg, scores.to(cfg.device))
             
@@ -201,19 +209,19 @@ def train_test():
             test_bar = tqdm(test_loader, file=sys.stdout)
             for test_data in test_bar:
                 test_images, test_labels_scores, test_lables_cls, test_lables_scores_list = test_data
-                outputs_cls, outputs_reg, out_reg_list = net(test_images.to(cfg.device))
+                outputs_cls, outputs_reg = net(test_images.to(cfg.device))
 
                 if cfg.flag_regression_four_split:
-                    bbb_sz = mean_absolute_error(out_reg_list[0].cpu(), test_lables_scores_list[0].cpu())
+                    bbb_sz = mean_absolute_error(outputs_reg[0].cpu(), test_lables_scores_list[0].cpu())
                     temp_sz.append(bbb_sz * len(test_images))
 
-                    bbb_hd = mean_absolute_error(out_reg_list[1].cpu(), test_lables_scores_list[1].cpu())
+                    bbb_hd = mean_absolute_error(outputs_reg[1].cpu(), test_lables_scores_list[1].cpu())
                     temp_hd.append(bbb_hd * len(test_images))
 
-                    bbb_xg = mean_absolute_error(out_reg_list[2].cpu(), test_lables_scores_list[2].cpu())
+                    bbb_xg = mean_absolute_error(outputs_reg[2].cpu(), test_lables_scores_list[2].cpu())
                     temp_xg.append(bbb_xg * len(test_images))
 
-                    bbb_rr = mean_absolute_error(out_reg_list[3].cpu(), test_lables_scores_list[3].cpu())
+                    bbb_rr = mean_absolute_error(outputs_reg[3].cpu(), test_lables_scores_list[3].cpu())
                     temp_rr.append(bbb_rr * len(test_images))
                 else:
                     bbb = mean_absolute_error(outputs_reg.cpu(), test_labels_scores.cpu(), multioutput='raw_values')
