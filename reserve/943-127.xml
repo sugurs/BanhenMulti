@@ -1,0 +1,26 @@
+<annotation>
+	<folder>ScoreDataset</folder>
+	<filename>943-127.jpg</filename>
+	<path>D:\banheng\ScoreDataset\943-127.jpg</path>
+	<source>
+		<database>Unknown</database>
+	</source>
+	<size>
+		<width>3854</width>
+		<height>2890</height>
+		<depth>3</depth>
+	</size>
+	<segmented>0</segmented>
+	<object>
+		<name>dog</name>
+		<pose>Unspecified</pose>
+		<truncated>0</truncated>
+		<difficult>0</difficult>
+		<bndbox>
+			<xmin>1858</xmin>
+			<ymin>775</ymin>
+			<xmax>2422</xmax>
+			<ymax>1429</ymax>
+		</bndbox>
+	</object>
+</annotation>

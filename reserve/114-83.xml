@@ -1,0 +1,26 @@
+<annotation>
+	<folder>banheng</folder>
+	<filename>114-83.jpg</filename>
+	<path>D:\banheng\114-83.jpg</path>
+	<source>
+		<database>Unknown</database>
+	</source>
+	<size>
+		<width>294</width>
+		<height>224</height>
+		<depth>3</depth>
+	</size>
+	<segmented>0</segmented>
+	<object>
+		<name>dog</name>
+		<pose>Unspecified</pose>
+		<truncated>0</truncated>
+		<difficult>0</difficult>
+		<bndbox>
+			<xmin>29</xmin>
+			<ymin>17</ymin>
+			<xmax>240</xmax>
+			<ymax>202</ymax>
+		</bndbox>
+	</object>
+</annotation>

@@ -47,7 +47,9 @@ class Dataset(Dataset):
         for line in fh:
             line = line.rstrip()
             words = line.split(' ')
-            imgs.append("/media/E_4TB/WW/dataset/AAA【已整理数据】瘢痕/【评分用】瘢痕/ScoreDataset/"+words[0]+'.jpg')
+            # imgs.append("/media/E_4TB/WW/dataset/AAA【已整理数据】瘢痕/【评分用】瘢痕/ScoreDataset/"+words[0]+'.jpg')
+            imgs.append("/media/D_4TB/SUGURS/Banhen_multi/saved_imgs/"+words[0]+'.jpg')
+
             scores.append([float(words[1]), float(words[2]), float(words[3]), float(words[4])])
             scores_sz.append(float(words[1]))
             scores_hd.append(float(words[2]))
